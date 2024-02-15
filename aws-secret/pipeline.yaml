@@ -1,0 +1,129 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: aws-sync-entitlement-key
+  description: This pipeline will sync the IBM entitlement key from AWS secrets manager. 
+spec:
+  params:
+  - name: accessKey
+    description: AWS Access Key
+    type: string
+  - name: secretAccessKey
+    description: AWS Secret Access Key
+    type: string
+  - name: secretName
+    description: The Secret name in AWS 
+    type: string
+  - name: region
+    description: The AWS Region the secret is in. (I.E us-east-2)
+    type: string
+  tasks:
+    - name: create-secret
+      params:
+        - name: accessKey
+          value: "$(params.accessKey)"
+        - name: secretAccessKey
+          value: "$(params.secretAccessKey)"
+      taskSpec:
+        params:
+            - name: accessKey
+            - name: secretAccessKey
+        steps:
+          - name: create-secret
+            image: quay.io/openshift/origin-cli:4.12
+            script: |
+              #!/bin/bash
+              accessKey=$(echo -n "$(params.accessKey)" | base64)
+              secretKey=$(echo -n "$(params.secretAccessKey)" | base64)
+              oc apply -f - <<EOF
+              ---
+              apiVersion: v1
+              kind: Namespace
+              metadata:
+                name: eso-deployer
+              ---
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: eso-aws-authn-secret
+                namespace: eso-deployer
+              data:
+                access-key: $accessKey
+                secret-access-key: $secretKey
+              type: Opaque
+              EOF
+    - name: create-eso-secret-store
+      runAfter:
+        - create-secret
+      params:
+        - name: region
+          value: "$(params.region)"
+      taskSpec:
+        params:
+            - name: region
+        steps:
+          - name: create-eso-secret
+            image: quay.io/openshift/origin-cli:4.12
+            script: |
+              oc apply -f - <<EOF
+              apiVersion: external-secrets.io/v1beta1
+              kind: SecretStore
+              metadata:
+                name: eso-secret-store
+                namespace: eso-deployer
+              spec:
+                provider:
+                  aws:
+                    auth:
+                      secretRef:
+                        accessKeyIDSecretRef:
+                          key: access-key
+                          name: eso-aws-authn-secret
+                        secretAccessKeySecretRef:
+                          key: secret-access-key
+                          name: eso-aws-authn-secret
+                    region: $(params.region)
+                    service: SecretsManager
+              EOF
+    - name: create-eso-secret
+      runAfter:
+        - create-eso-secret-store
+      params:
+        - name: secretName
+          value: "$(params.secretName)"
+      taskSpec:
+        params:
+            - name: secretName
+        steps:
+          - name: create-eso-secret
+            image: quay.io/openshift/origin-cli:4.12
+            script: |
+              oc apply -f - <<EOF
+              apiVersion: external-secrets.io/v1beta1
+              kind: ExternalSecret
+              metadata:
+                name: deployer-entitlement-key
+                namespace: eso-deployer
+              spec:
+                refreshInterval: 5m
+                secretStoreRef:
+                  kind: SecretStore
+                  name: eso-secret-store
+                data:
+                - secretKey: entitlementkey
+                  remoteRef:
+                    conversionStrategy: Default
+                    decodingStrategy: None
+                    key: $(params.secretName)
+                    property: entitlementkey
+                target:
+                  name: deployer-entitlement-key
+                  creationPolicy: "Owner"
+                  deletionPolicy: "Retain"
+                  template:
+                    type: Opaque
+                    metadata:
+                    data:
+                      entitlementkey: |-
+                          {{ .entitlementkey | trim }}
+              EOF

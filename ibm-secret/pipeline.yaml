@@ -1,0 +1,111 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: ibm-sync-entitlement-key
+  description: This pipeline will sync the IBM entitlement key from AWS secrets manager. 
+spec:
+  params:
+  - name: secretsMangerId
+    description: The ID for the secrets Instances
+    type: string
+  - name: secretID
+    description: The ID for the secret. (I.E 0b5571f7-21e6-42b7-91c5-3f5ac9793a46)
+    type: string
+  - name: apiKey
+    description: IBM API Key
+    type: string
+  - name: region
+    description: The IBM Cloud Region the secret is in. (I.E us-south)
+    type: string
+  tasks:
+    - name: create-secret
+      params:
+        - name: apiKey
+          value: $(params.apiKey)
+      taskSpec:
+        params:
+            - name: apiKey
+        steps:
+          - name: create-secret
+            image: quay.io/openshift/origin-cli:4.12
+            script: |
+              #!/bin/bash
+              apiKey=$(echo -n "$(params.apiKey)" | base64)
+              oc apply -f - <<EOF
+              ---
+              apiVersion: v1
+              kind: Namespace
+              metadata:
+                name: eso-deployer
+              ---
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: ibm-secret
+                namespace: eso-deployer
+              data:
+                apiKey: $apiKey
+              type: Opaque
+              EOF
+    - name: create-eso-secret-store
+      runAfter:
+        - create-secret
+      params:
+        - name: secretsMangerId
+          value: $(params.secretsMangerId)
+        - name: region
+          value: $(params.region)
+      taskSpec:
+        params:
+            - name: secretsMangerId
+            - name: region
+        steps:
+          - name: create-eso-secret
+            image: quay.io/openshift/origin-cli:4.12
+            script: |
+              #!/bin/bash
+              oc apply -f - <<EOF
+              apiVersion: external-secrets.io/v1beta1
+              kind: SecretStore
+              metadata:
+                name: eso-secret-ibm-store
+                namespace: eso-deployer
+              spec:
+                provider:
+                  ibm:
+                    serviceUrl: "https://$(params.secretsMangerId).$(params.region).secrets-manager.appdomain.cloud"
+                    auth:
+                      secretRef:
+                        secretApiKeySecretRef:
+                          name: ibm-secret
+                          key: apiKey
+              EOF
+    - name: create-eso-secret
+      runAfter:
+        - create-eso-secret-store
+      params:
+        - name: secretID
+          value: $(params.secretID)
+      taskSpec:
+        params:
+            - name: secretID
+        steps:
+          - name: create-eso-secret
+            image: quay.io/openshift/origin-cli:4.12
+            script: |
+              oc apply -f - <<EOF
+              apiVersion: external-secrets.io/v1beta1
+              kind: ExternalSecret
+              metadata:
+                name: deployer-entitlement-key
+                namespace: eso-deployer
+              spec:
+                refreshInterval: 5m
+                secretStoreRef:
+                  kind: SecretStore
+                  name: eso-secret-ibm-store
+                data:
+                - secretKey: deployer-entitlement-key
+                  remoteRef:
+                    key: $(params.secretID)
+              EOF
