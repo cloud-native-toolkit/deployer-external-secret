@@ -1,0 +1,20 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: aws-sync-entitlement-key-
+spec:
+  pipelineRef:
+    name: aws-sync-entitlement-key
+  params:
+    - name: accessKey
+      description: AWS Access Key
+      value: ""
+    - name: secretAccessKey
+      description: AWS Secret Access Key
+      value: ""
+    - name: secretName
+      description: The Secret name in AWS 
+      value: ""
+    - name: region
+      description: The AWS Region the secret is in. (I.E us-east-2)
+      value: ""

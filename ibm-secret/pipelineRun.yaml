@@ -1,0 +1,20 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: ibm-sync-entitlement-key-
+spec:
+  pipelineRef:
+    name: aws-sync-entitlement-key
+  params:
+    - name: secretsMangerId
+      description: The ID for the secrets Instances
+      value: ""
+    - name: secretID
+      description: The ID for the secret. (I.E 0b5571f7-21e6-42b7-91c5-3f5ac9793a46)
+      value: ""
+    - name: apiKey
+      description: IBM API Key
+      value: ""
+    - name: region
+      description: The IBM Cloud Region the secret is in. (I.E us-south)
+      value: ""
